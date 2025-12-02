@@ -1,0 +1,359 @@
+<!doctype html>
+<!--
+Copyright 2023 Foster Electric Co., Ltd.
+Released under the MIT license
+-->
+<html>
+  <style>
+    .flex {
+        display: -webkit-flex;
+        display: -moz-flex;
+        display: -ms-flex;
+        display: -o-flex;
+        display: flex;
+        gap: 6px 6px;
+    }    
+  </style>
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <meta name="description" content="Foster Hearable">
+    <meta name="viewport" content="width=640, maximum-scale=1.0, user-scalable=yes">
+    <title>Foster Hearable</title>
+    <link rel="stylesheet" href="./components/simple.css"> 
+  </head>
+<body>
+<div class="container">
+    <h1>Foster Hearable</h1>
+    <p>Head Tracking Frontend</p>
+
+    <div class="flex" >
+        <canvas id="myCanvas"></canvas>
+        <div>
+            <label>Angle Offset [rad]</label>
+            <input type="text" id="x_ofs" inputmode="numeric" size="10" value= 0.0 style="color: red;">
+            <input type="text" id="y_ofs" inputmode="numeric" size="10" value= 0.0 style="color: green;">
+            <input type="text" id="z_ofs" inputmode="numeric" size="10" value= 0.0 style="color: blue;"">
+            <button id="CalibrateButton" class="button">Calibrate</button>
+        </div>
+    </div>
+    <br/>
+    <div class="flex" >
+        <button id="MultiFunctionButton" class="button">Play</button>
+        <input type="range" min="0" max="100" value="0" step="1" id="PositionSlider">
+        <label id="slider_label">0</label>
+    </div>
+    <br/>
+    <div class="flex" >
+        <label>WebSocket URL : <input type="text" id="ws_url" size="40" value="ws://127.0.0.1:6301"></label>
+        <button id="WebSocketButton" class="button">Connect</button>    
+    </div>
+    <div class="code"><pre>
+    <span id="status"> </span></pre>
+    </div>
+    <hr>
+    <div class="footer">
+        For more information, see <a href="https://github.com/foster-hearable/HeadTracker" target="_blank">GitHub</a> !
+    </div>
+</div>
+
+<script type="importmap">
+    {
+        "imports": {
+            "three": "./components/three/build/three.module.js"
+        }
+    }
+</script>
+
+<!--=======================================================================================-->
+<script>
+    //--------------------------------------------------
+    //Globals
+    //--------------------------------------------------
+    gQuat     = [1.0, 0.0, 0.0, 0.0]        //[w, x, y, z]
+    gHomeQuat = [1.0, 0.0, 0.0, 0.0]
+
+    norm = function(vec) {
+        let tmp = 0
+        for (let i=0; i<vec.length; i++) {
+            tmp += (vec[i]*vec[i])
+        }
+        tmp = Math.sqrt(tmp)
+        return vec.map((d) => (d/tmp))
+    }
+
+    set_angle_offset = function() {
+        x_rad = parseFloat(document.getElementById('y_ofs').value)
+        y_rad = parseFloat(document.getElementById('x_ofs').value)
+        z_rad = -parseFloat(document.getElementById('z_ofs').value)
+        //console.log(x, y, z)
+
+        sx = Math.sin(0.5 * x_rad * Math.PI)
+        sy = Math.sin(0.5 * y_rad * Math.PI)
+        sz = Math.sin(0.5 * z_rad * Math.PI)
+        cx = Math.cos(0.5 * x_rad * Math.PI)
+        cy = Math.cos(0.5 * y_rad * Math.PI)
+        cz = Math.cos(0.5 * z_rad * Math.PI)
+        
+        gHomeQuat = norm([
+            -sx * sy * sz + cx * cy * cz,
+             cx * sy * sz + sx * cy * cz,
+            -sx * cy * sz + cx * sy * cz,
+             cx * cy * sz + sx * sy * cz,
+        ])
+        console.log(gHomeQuat)
+    }
+    set_angle_offset()
+</script>
+
+
+
+<script>
+    //--------------------------------------------------
+    //WebSocket
+    //--------------------------------------------------
+    let wsurl_element = document.getElementById('ws_url');
+    let sock = null
+
+    sock_send = function(d) {
+        var ret = false
+        document.getElementById('slider_label').innerHTML = d
+        if (document.getElementById('WebSocketButton').textContent == 'Disconnect') {
+            sock.send(d)
+            ret = true
+        }
+        return ret
+    }
+
+    ws_refresh = function() {
+        if (wsurl_element.disabled) {
+            console.log('WebSocket: Close.');        
+            sock.close()
+        } else {
+            console.log('WebSocket: Reconnect.');        
+            sock = new WebSocket(wsurl_element.value);
+
+            sock.addEventListener('open',function(e){
+                console.log('WebSocket: Connected.');
+                document.getElementById('WebSocketButton').textContent = "Disconnect"
+                wsurl_element.disabled = true
+
+                sock_send(-1)
+            });
+            sock.onclose = () => {
+                console.log('WebSocket: Closed.');        
+                document.getElementById('WebSocketButton').textContent = "Connect"
+                wsurl_element.disabled = false
+            }
+            sock.onmessage = function(e) {
+                recv = e.data.split(',')
+                PositionSlider.max = recv[0]-1
+                document.getElementById('status').innerHTML = recv[1];
+                gQuat = [parseFloat(recv[2]), parseFloat(recv[3]), parseFloat(recv[4]), parseFloat(recv[5])]
+            }
+        }
+    }
+    ws_refresh()
+
+
+    window.setInterval( function() {
+        if (document.getElementById('MultiFunctionButton').textContent != 'Play') {
+            PositionSlider.value = parseInt(PositionSlider.value) + 1
+            //console.log(PositionSlider.value, PositionSlider.max)
+            
+            if (PositionSlider.value >= parseInt(PositionSlider.max)) {
+                PositionSlider.value =  PositionSlider.max-1
+                document.getElementById('MultiFunctionButton').textContent = 'Play'
+            }
+            else {
+                var ret = sock_send(PositionSlider.value)
+                if (ret == false) {
+                    document.getElementById('MultiFunctionButton').textContent = 'Play'
+                }
+            }
+        }
+    }, 40);
+
+    //--------------------------------------------------
+    // Onload setups and Buttons
+    //--------------------------------------------------
+    window.onload = function () {
+        // None
+    }
+
+    document.getElementById('PositionSlider').addEventListener('input', function(e) {
+        sock_send(PositionSlider.value)
+    });
+
+    document.getElementById('MultiFunctionButton').addEventListener('click', function(e) {
+        if (document.getElementById('MultiFunctionButton').textContent != 'Play') {
+            document.getElementById('MultiFunctionButton').textContent =  'Play'
+        }
+        else {
+            document.getElementById('MultiFunctionButton').textContent =  'Stop'
+        }
+    });
+
+    document.getElementById('WebSocketButton').addEventListener('click', function(e) {
+        ws_refresh();
+    });
+
+    document.getElementById('CalibrateButton').addEventListener('click', function(e) {
+        y = Math.asin(2*gQuat[1]*gQuat[3] + 2*gQuat[2]*gQuat[0])
+        if (Math.cos(y) != 0) {
+            x = Math.atan(-(2*gQuat[2]*gQuat[3] - 2*gQuat[1]*gQuat[0])/(2*gQuat[0]*gQuat[0] + 2*gQuat[3]*gQuat[3] - 1))
+            z = Math.atan(-(2*gQuat[1]*gQuat[2] - 2*gQuat[3]*gQuat[0])/(2*gQuat[0]*gQuat[0] + 2*gQuat[1]*gQuat[1] - 1))
+        }
+        else {
+            x = Math.atan( (2*gQuat[2]*gQuat[3] + 2*gQuat[1]*gQuat[0])/(2*gQuat[0]*gQuat[0] + 2*gQuat[2]*gQuat[2] - 1))
+            z = 0
+        }
+        document.getElementById('x_ofs').value = x/Math.PI
+        document.getElementById('y_ofs').value = y/Math.PI
+        document.getElementById('z_ofs').value = z/Math.PI
+        set_angle_offset()
+    });
+    document.getElementById('x_ofs').addEventListener('change', function(e) {
+        set_angle_offset()
+    });
+    document.getElementById('y_ofs').addEventListener('change', function(e) {
+        set_angle_offset()
+    });
+    document.getElementById('z_ofs').addEventListener('change', function(e) {
+        set_angle_offset()
+    });
+
+</script>
+
+
+<!--=======================================================================================-->
+<script type="module">
+    let url_string = window.location.href;
+    let url = new URL(url_string);
+    let mode=url.searchParams.get("mode");
+    //console.log("Mode : ", mode)
+
+    //--------------------------------------------------
+    //3D Rendering
+    //--------------------------------------------------
+    import * as THREE from 'three';
+
+    const width = 960;
+    const height = 540;
+    const renderer = new THREE.WebGLRenderer({
+        canvas: document.querySelector("#myCanvas"),
+    });
+    renderer.setPixelRatio(window.devicePixelRatio);
+    //renderer.setSize(width, height);
+
+    const scene  = new THREE.Scene();
+    scene.background = new THREE.Color(0xfff8d4);
+
+    const camera = new THREE.PerspectiveCamera(50, width / height);
+    camera.position.set(-25, 5, 15);
+    camera.lookAt(new THREE.Vector3(0, 10, 0));
+
+    var grid = new THREE.GridHelper(80, 50, 0xffff00)
+    scene.add(grid);
+
+    var axeH = new THREE.AxesHelper(50)
+    axeH.setColors("green", "red", "blue")
+    scene.add(axeH);
+
+    import { OrbitControls } from './components/three/jsm/controls/OrbitControls.js';
+    const controls = new OrbitControls(camera, document.querySelector("#myCanvas"));
+    controls.object.position.set(-25, 15, 15);
+    controls.target = new THREE.Vector3(0, 10, 0);
+
+    import { OBJLoader } from './components/three/jsm/loaders/OBJLoader.js';
+    const objLoader = new OBJLoader();
+    var obj
+    
+    //----------------------
+    if ((mode == "L") || (mode == "Left") || (mode == "left")) {
+        // Left Earbuds
+        objLoader.load(
+            './components/ROBIN2_Lch_20200917.obj',
+            function (o) {
+                var objA = o
+                objA.useQuaternion = true;
+                objA.children[0].material.color.set(0xffffff);
+                objA.scale.set(0.5, 0.5, 0.5)
+                objA.quaternion.setFromEuler(new THREE.Euler(0, Math.PI/2, Math.PI, 'XYZ'))
+
+                obj = new THREE.Group();
+                obj.add(objA)
+                obj.position.set(0, 10, 0)
+
+                scene.add(obj);
+            },
+        );
+    }
+    else if ((mode == "R") || (mode == "Right") || (mode == "right")) {
+        // Right Earbuds
+        objLoader.load(
+            './components/ROBIN2_Rch_20200917.obj',
+            function (o) {
+                var objA = o
+                objA.useQuaternion = true;
+                objA.children[0].material.color.set(0xffffff);
+                objA.scale.set(0.5, 0.5, 0.5)
+                objA.quaternion.setFromEuler(new THREE.Euler(0, Math.PI/2, Math.PI, 'XYZ'))
+
+                obj = new THREE.Group();
+                obj.add(objA)
+                obj.position.set(0, 10, 0)
+
+                scene.add(obj);
+            },
+        );
+    }
+    else {
+        // Box Head
+        const geometry  = new THREE.BoxGeometry(10, 10, 10);
+        const material = [
+            new THREE.MeshBasicMaterial({map: new THREE.TextureLoader().load('./components/smile_L.png')}),
+            new THREE.MeshBasicMaterial({map: new THREE.TextureLoader().load('./components/smile_R.png')}),
+            new THREE.MeshBasicMaterial({map: new THREE.TextureLoader().load('./components/smile_Top.png')}),
+            new THREE.MeshBasicMaterial({color:'lightseagreen'}),
+            new THREE.MeshBasicMaterial({map: new THREE.TextureLoader().load('./components/smile.png')}),
+            new THREE.MeshBasicMaterial({color:'lightgreen'}),
+        ];
+        const objA = new THREE.Mesh(geometry, material);
+        objA.useQuatermion = true;
+        objA.quaternion.setFromEuler(new THREE.Euler(Math.PI/2, 0, -Math.PI/2, 'XYZ'))
+
+        obj = new THREE.Group();
+        obj.add(objA);
+        obj.useQuaternion = true;
+        obj.position.set(0, 10, 0)
+        scene.add(obj);
+    }
+
+    const light = new THREE.HemisphereLight(0xffffff, 0x7F7F7F, 2);
+    light.position.set(1, 1, 1); 
+    scene.add(light);
+
+    const robin_to_threejs = new THREE.Quaternion()
+    //robin_to_threejs.setFromEuler(new THREE.Euler(Math.PI, 0, Math.PI/2, 'XYZ'))        //Rotate4
+    robin_to_threejs.setFromEuler(new THREE.Euler(Math.PI, 0, -Math.PI/2, 'XYZ'))       //社内歩き
+    
+    
+    function tick() {
+        var home      = new THREE.Quaternion( gHomeQuat[1],  gHomeQuat[2],  gHomeQuat[3], gHomeQuat[0])
+        var home_conj = new THREE.Quaternion(-gHomeQuat[1], -gHomeQuat[2], -gHomeQuat[3], gHomeQuat[0])
+        var quat      = new THREE.Quaternion(     gQuat[1],      gQuat[2],      gQuat[3],     gQuat[0])
+        quat.premultiply(robin_to_threejs)
+        
+        if (typeof obj === "object") {
+            axeH.quaternion.copy(home)
+            obj.quaternion.copy(quat.multiply(home))
+        }
+        renderer.render(scene, camera);
+        requestAnimationFrame(tick);
+    }
+    tick();
+</script>
+
+</body>
+</html>
